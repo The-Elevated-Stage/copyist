@@ -44,6 +44,7 @@ review-checkpoints: [N] ([describe when reviews occur])
 
 <sections>
 - mandatory-rules
+- danger-files
 - objective
 - prerequisites
 - bootstrap
@@ -66,10 +67,42 @@ review-checkpoints: [N] ([describe when reviews occur])
 - Must check system message context usage after every tool response
 - Must use `temp/` for scratch files — never `/tmp/` directly
 - Must follow all `<template follow="exact">` blocks verbatim
-- Context budget: 140k tokens for file reads, 170k total session cap — prepare handoff at 70% usage
-- Must include all 10 review message fields in checkpoint messages
+- Context budget: 140k tokens for file reads, 170k total session cap — prepare handoff at 65% usage
+- Must include all 11 review message fields in checkpoint messages
 - Error recovery: every error must be reported to database before retry
 - Must include heartbeat updates after every major step
+</mandatory>
+</section>
+
+<section id="danger-files">
+<mandatory>
+## Danger Files
+
+[If no danger files apply to this task, replace this section's content with: "N/A — no shared files identified for this task."]
+
+### Shared Resources
+
+| File Path | Owner Task | This Task's Access | Mitigation |
+|-----------|-----------|-------------------|------------|
+| [path] | [task-id] | [read-only / append-only / coordinate] | [strategy] |
+
+### Coordination Rules
+
+- [Specific rules for each danger file — e.g., "Do not modify lines 1-50 of `src/index.ts` — owned by task-03"]
+- [Barrel export ordering, shared config sections, etc.]
+
+### DANGER FILE UPDATE Message Template
+
+When modifying a danger file, notify parallel siblings:
+
+```sql
+INSERT INTO orchestration_messages (task_id, from_session, message, message_type)
+VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
+'DANGER FILE UPDATE: [file-path]
+Change: [what was modified]
+Impact: [what parallel tasks should know]',
+'instruction');
+```
 </mandatory>
 </section>
 
@@ -136,7 +169,7 @@ SET state = 'working',
     last_heartbeat = datetime('now'),
     retry_count = 0
 WHERE task_id = '[task-id]'
-  AND state NOT IN ('working', 'complete', 'exited');
+  AND state IN ('watching', 'fix_proposed', 'exit_requested');
 ```
 </template>
 
@@ -159,9 +192,11 @@ Task(
     description="Monitor conductor messages for [task-id]",
     prompt="""Monitor coordination database for [task-id].
 
-Check every 8 seconds using comms-link:
+Check every 15 seconds using comms-link:
 1. Query: SELECT state FROM orchestration_tasks WHERE task_id = '[task-id]'
 2. Query: SELECT message FROM orchestration_messages WHERE task_id = '[task-id]' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
+3. Heartbeat: SELECT last_heartbeat FROM orchestration_tasks WHERE task_id = '[task-id]'
+   If older than 60 seconds: UPDATE orchestration_tasks SET last_heartbeat = datetime('now') WHERE task_id = '[task-id]'
 
 Exit conditions:
 - State changes from 'working' (indicates conductor intervention)
@@ -173,6 +208,7 @@ When exiting:
 - Include latest message if any
 - Return immediately without further action""",
     subagent_type="general-purpose",
+    model="opus",
     run_in_background=True
 )
 ```
@@ -332,7 +368,7 @@ EOF
 
 **Update database (message FIRST, then state):**
 
-<mandatory>All 10 review message fields are required. No omissions.</mandatory>
+<mandatory>All 11 review message fields are required. No omissions.</mandatory>
 
 <template follow="exact">
 ```sql
@@ -349,7 +385,9 @@ Summary: [what was accomplished]
 Files Modified: [count]
 Tests: [status]
 Smoothness: [0-9]
-Reason: [why review needed]',
+Reason: [why review needed]
+Key Outputs:
+  - [path] (created/modified/rag-addition)',
 'review_request');
 
 -- Then state
@@ -361,7 +399,7 @@ WHERE task_id = '[task-id]';
 </template>
 
 <context>
-**Review message fields (all 10 required):**
+**Review message fields (all 11 required):**
 - `Context Usage: [actual %]` — Your current context usage
 - `Self-Correction: [YES/NO]` — Whether you self-corrected during this phase
 - `Deviations: [count + severity]` — Issues encountered
@@ -372,6 +410,7 @@ WHERE task_id = '[task-id]';
 - `Tests: [status]` — Test results or "N/A" for doc-only tasks
 - `Smoothness: [0-9]` — Quality/confidence score (see smoothness scale in SKILL.md)
 - `Reason: [why review needed]` — Why this checkpoint requires conductor review
+- `Key Outputs: [paths]` — Files created, modified, or added to RAG
 </context>
 
 ### Step [N+1]: Wait for Review
@@ -389,7 +428,7 @@ Task(
     description="Wait for review approval for [task-id]",
     prompt="""Wait for conductor review of [task-id].
 
-Poll every 8 seconds using comms-link:
+Poll every 10 seconds using comms-link:
 1. Query: SELECT state FROM orchestration_tasks WHERE task_id = '[task-id]'
 2. Query: SELECT message FROM orchestration_messages WHERE task_id = '[task-id]' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
 
@@ -400,7 +439,7 @@ Exit when state changes from 'needs_review' to:
 
 Include latest conductor message in response.
 
-Max iterations: 150 (20 minutes)
+Max iterations: 90 (15 minutes)
 If timeout: Report TIMEOUT""",
     subagent_type="general-purpose",
     run_in_background=False
@@ -513,39 +552,11 @@ EOF
 ```
 </template>
 
-### Step [N+1]: Update Database
+### Step [N+1]: Terminate Background Subagent
 
-**Terminate background subagent:**
 ```python
 TaskStop(task_id=[subagent-id])
 ```
-
-<mandatory>Message FIRST, then state + metadata.</mandatory>
-
-<template follow="exact">
-```sql
--- Message FIRST
-INSERT INTO orchestration_messages (task_id, from_session, message, message_type)
-VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
-'TASK COMPLETE: [summary]
-
-Summary:
-- [key results]
-
-Report: [report path]
-Commit: [SHA]
-All verification checks: PASSED',
-'completion');
-
--- Then state + metadata
-UPDATE orchestration_tasks
-SET state = 'complete',
-    completed_at = datetime('now'),
-    report_path = '[report path]',
-    last_heartbeat = datetime('now')
-WHERE task_id = '[task-id]';
-```
-</template>
 
 ### Step [N+2]: Generate Completion Report
 
@@ -603,6 +614,41 @@ WHERE task_id = '[task-id]';
 **Files:** [count] added/modified
 ```
 </template>
+
+### Step [N+3]: Update Database (TERMINAL WRITE)
+
+<mandatory>Message FIRST, then state + metadata. This is the last database write — the report must already exist at `[report path]` before this step.</mandatory>
+
+<template follow="exact">
+```sql
+-- Message FIRST
+INSERT INTO orchestration_messages (task_id, from_session, message, message_type)
+VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
+'TASK COMPLETE: [summary]
+
+Smoothness: [0-9]
+Context Usage: [X]%
+Self-Correction: [YES/NO]
+Deviations: [count]
+Files Modified: [count]
+Tests: [status]
+Key Outputs:
+  - [path] (created/modified/rag-addition)
+
+Report: [report path]
+Commit: [SHA]
+All verification checks: PASSED',
+'completion');
+
+-- Then state + metadata
+UPDATE orchestration_tasks
+SET state = 'complete',
+    completed_at = datetime('now'),
+    report_path = '[report path]',
+    last_heartbeat = datetime('now')
+WHERE task_id = '[task-id]';
+```
+</template>
 </core>
 </section>
 
@@ -655,11 +701,16 @@ INSERT INTO orchestration_messages (task_id, from_session, message, message_type
 VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
 'ERROR (Retry [N]/5): [description]
 
+Context Usage: [X]%
+Self-Correction: [YES/NO]
 Step: [which step failed]
 Error: [specific message]
 Context: [relevant state]
-
-Proposed fix: [what will be tried]',
+Report: [error report path]
+Key Outputs:
+  - [path] (created/modified)
+Proposed fix: [what will be tried]
+Awaiting conductor fix proposal',
 'error');
 
 UPDATE orchestration_tasks

@@ -122,7 +122,7 @@ if $IS_PARALLEL; then
     echo ""
     echo "--- Parallel Task Sections ---"
 
-    for section in "Review Checkpoint" "Post-Review Execution" "Success Criteria"; do
+    for section in "Danger Files" "Review Checkpoint" "Post-Review Execution" "Success Criteria"; do
         if grep -qi "## $section" "$FILE" 2>/dev/null; then
             ok "Section found: $section"
         else

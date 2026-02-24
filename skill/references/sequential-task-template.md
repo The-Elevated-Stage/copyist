@@ -64,7 +64,7 @@ review-checkpoints: 0
 - Must follow all `<template follow="exact">` blocks verbatim
 - Must include heartbeat updates after every major step
 - Must report errors to database before any retry attempt
-- Context budget: 140k tokens for file reads, 170k total session cap
+- Context budget: 140k tokens for file reads, 170k total session cap — prepare handoff at 65% usage
 </mandatory>
 </section>
 
@@ -126,7 +126,7 @@ SET state = 'working',
     last_heartbeat = datetime('now'),
     retry_count = 0
 WHERE task_id = '[task-id]'
-  AND state NOT IN ('working', 'complete', 'exited');
+  AND state IN ('watching', 'fix_proposed', 'exit_requested');
 ```
 </template>
 
@@ -323,7 +323,14 @@ INSERT INTO orchestration_messages (task_id, from_session, message, message_type
 VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
 'TASK COMPLETE: [summary]
 
-[details]
+Smoothness: [0-9]
+Context Usage: [X]%
+Self-Correction: [YES/NO]
+Deviations: [count]
+Files Modified: [count]
+Tests: [status]
+Key Outputs:
+  - [path] (created/modified/rag-addition)
 
 Report: [report path]
 Commit: [SHA]
@@ -430,11 +437,16 @@ INSERT INTO orchestration_messages (task_id, from_session, message, message_type
 VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
 'ERROR (Retry [N]/5): [description]
 
+Context Usage: [X]%
+Self-Correction: [YES/NO]
 Step: [which step]
 Error: [specific message]
 Context: [relevant state]
-
-Proposed fix: [what will be tried]',
+Report: [error report path]
+Key Outputs:
+  - [path] (created/modified)
+Proposed fix: [what will be tried]
+Awaiting conductor fix proposal',
 'error');
 
 UPDATE orchestration_tasks
@@ -446,7 +458,33 @@ WHERE task_id = '[task-id]';
 ```
 </template>
 
-Then wait for conductor response before continuing.
+<mandatory>After reporting an error, launch a blocking subagent to wait for the conductor's fix proposal. Do not proceed without it — the session has no other way to receive conductor instructions.</mandatory>
+
+<template follow="exact">
+```python
+Task(
+    description="Wait for fix proposal for [task-id]",
+    prompt="""Wait for conductor fix proposal for [task-id].
+
+Poll every 10 seconds using comms-link:
+1. Query: SELECT state FROM orchestration_tasks WHERE task_id = '[task-id]'
+2. Query: SELECT message FROM orchestration_messages WHERE task_id = '[task-id]' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
+
+Exit when state changes from 'error' to:
+- 'fix_proposed' -> Report: FIX PROPOSED with instructions
+
+Include latest conductor message in response.
+
+Max iterations: 90 (15 minutes)
+If timeout: Report TIMEOUT""",
+    subagent_type="general-purpose",
+    model="opus",
+    run_in_background=False
+)
+```
+</template>
+
+Apply the conductor's fix instructions, update state back to `working`, and retry the failed step.
 
 <mandatory>If retry count reaches 5, session must exit.</mandatory>
 

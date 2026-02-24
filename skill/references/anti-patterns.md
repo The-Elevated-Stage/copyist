@@ -11,6 +11,8 @@ tier: 3
 - structural
 - quality
 - format
+- anti-pattern-guard-clause
+- anti-pattern-polling-intervals
 </sections>
 
 <section id="critical">
@@ -447,6 +449,34 @@ The `[STRICT]`/`[FLEXIBLE]` convention is replaced by the hybrid document struct
 
 <context>
 The Arranger pipeline produces self-contained phase sections with sentinel markers and a line range index. The copyist reads only its assigned section by line range, not the full plan. Reading the full plan wastes context and defeats the self-containment design.
+</context>
+</section>
+
+<section id="anti-pattern-guard-clause">
+<core>
+### 24. Overly Permissive Claim Guard Clause
+
+**Wrong:** `AND state NOT IN ('working', 'complete', 'exited')` — allows claiming from 8 states including `needs_review`, `error`, and `review_approved`, potentially stomping in-progress work.
+
+**Correct:** `AND state IN ('watching', 'fix_proposed', 'exit_requested')` — only 3 states where claiming is safe. The Conductor ensures tasks are in a claimable state before launching musicians.
+</core>
+
+<context>
+The `NOT IN` formulation is dangerous because it implicitly allows claiming from any new state added to the schema. The `IN` formulation is explicit and safe — only the documented claimable states permit a new session to take ownership.
+</context>
+</section>
+
+<section id="anti-pattern-polling-intervals">
+<core>
+### 25. Hardcoded Polling Intervals That Diverge From Musician Constants
+
+**Wrong:** Embedding arbitrary polling intervals (e.g., "Check every 8 seconds") in subagent prompt templates without checking the Musician's timing constants.
+
+**Correct:** Use the Musician's documented intervals — background watcher: 15 seconds, pause/blocking watcher: 10 seconds. Blocking review timeout: 90 iterations (15 minutes).
+</core>
+
+<context>
+The Musician skill defines canonical timing constants. Since task instructions use `<template follow="exact">`, the Copyist's embedded intervals override the Musician's own knowledge. Mismatched intervals create unnecessary database load (too fast) or delayed response (too slow).
 </context>
 </section>
 

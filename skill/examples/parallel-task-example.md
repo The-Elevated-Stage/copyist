@@ -31,6 +31,7 @@ review-checkpoints: 1 (after extraction proposal, before finalization)
 
 <sections>
 - mandatory-rules
+- danger-files
 - objective
 - prerequisites
 - bootstrap
@@ -54,9 +55,17 @@ review-checkpoints: 1 (after extraction proposal, before finalization)
 - Must use `temp/` for scratch files — never `/tmp/` directly
 - Must follow all `<template follow="exact">` blocks verbatim
 - Context budget: 140k tokens for file reads, 170k total session cap — prepare handoff at 70% usage
-- Must include all 10 review message fields in checkpoint messages
+- Must include all 11 review message fields in checkpoint messages
 - Error recovery: every error must be reported to database before retry
 - Must include heartbeat updates after every major step
+</mandatory>
+</section>
+
+<section id="danger-files">
+<mandatory>
+## Danger Files
+
+N/A — no shared files identified for this task.
 </mandatory>
 </section>
 
@@ -330,7 +339,7 @@ EOF
 
 **Update database (message FIRST, then state):**
 
-<mandatory>All 10 review message fields are required. No omissions.</mandatory>
+<mandatory>All 11 review message fields are required. No omissions.</mandatory>
 
 <template follow="exact">
 ```sql
@@ -381,7 +390,7 @@ Task(
     description="Wait for review approval for task-03",
     prompt="""Wait for conductor review of task-03.
 
-Poll every 8 seconds using comms-link:
+Poll every 10 seconds using comms-link:
 1. Query: SELECT state FROM orchestration_tasks WHERE task_id = 'task-03'
 2. Query: SELECT message FROM orchestration_messages WHERE task_id = 'task-03' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
 
@@ -392,7 +401,7 @@ Exit when state changes from 'needs_review' to:
 
 Include latest conductor message in response.
 
-Max iterations: 150 (20 minutes)
+Max iterations: 90 (15 minutes)
 If timeout: Report TIMEOUT""",
     subagent_type="general-purpose",
     run_in_background=False
@@ -432,15 +441,25 @@ WHERE task_id = 'task-03';
 <core>
 ## Post-Review Execution
 
-### Step 7: Create RAG Files
+### Step 7: Create RAG Proposal Files
 
 **Context estimate:** ~15k tokens
-- Writing [N] RAG files from approved proposals, ~40 lines each
+- Writing [N] RAG proposal files from approved extraction, ~40 lines each
 **Running total:** ~70k / 140k
 
-For each approved pattern, create file in `docs/knowledge-base/testing/[pattern-name].md`:
+For each approved pattern, create a proposal file in `docs/implementation/proposals/rag-testing-[pattern-name].md`:
 
 <template follow="format">
+```markdown
+# RAG Proposal: testing/[pattern-name]
+
+**Target:** docs/knowledge-base/testing/[pattern-name].md
+**Source:** docs_old/[original-file].md
+**Status:** valid | outdated | anti-pattern
+**Extracted by:** task-03
+
+## Proposed Content
+
 ```yaml
 ---
 id: testing/[pattern-name]
@@ -454,10 +473,7 @@ source: docs_old/[original-file].md
 extracted_from: task-03
 ---
 ```
-</template>
 
-**Content structure:**
-```markdown
 # [Pattern Name]
 
 **Status:** Valid / Outdated / Anti-pattern
@@ -473,6 +489,9 @@ extracted_from: task-03
 ## Common Pitfalls
 [What to avoid]
 ```
+</template>
+
+<mandatory>Musicians must NOT call `ingest_file` or `ingest_data` directly. Create proposal files and list them in deliverables — the conductor handles ingestion after review.</mandatory>
 
 ```python
 result = TaskOutput(task_id=[subagent-id], block=False, timeout=100)
@@ -503,19 +522,11 @@ Create `docs/reference/testing-guide.md` with warning label at top:
 
 Consolidate all valid patterns into organized guide with table of contents.
 
-### Step 9: RAG Ingestion
+### Step 9: Verify Proposals Complete
 
-<mandatory>Only after all verification checks pass.</mandatory>
+<mandatory>All RAG proposals must be listed in deliverables before completion.</mandatory>
 
-Ingest all testing RAG files using mcp-local-rag `ingest_file` tool.
-
-<guidance>
-**Test retrieval:**
-```
-query_documents({ query: "widget testing patterns flutter", limit: 5 })
-# Expected scores: < 0.3 = good match
-```
-</guidance>
+Verify all [N] RAG proposal files exist in `docs/implementation/proposals/rag-testing-*.md` and each contains complete content with YAML frontmatter. The conductor will handle ingestion after reviewing the proposals.
 </core>
 </section>
 
@@ -533,8 +544,8 @@ query_documents({ query: "widget testing patterns flutter", limit: 5 })
       **Expected:** EXISTS
       **If failed:** Re-check review checkpoint results
 
-- [ ] All RAG files have complete YAML frontmatter
-      **Verify:** `for f in docs/knowledge-base/testing/*.md; do grep -q "^---" "$f" && grep -q "^id:" "$f" && grep -q "^status:" "$f" || echo "Missing metadata: $f"; done`
+- [ ] All RAG proposal files have complete content
+      **Verify:** `for f in docs/implementation/proposals/rag-testing-*.md; do grep -q "^---" "$f" && grep -q "^id:" "$f" && grep -q "^status:" "$f" || echo "Missing metadata: $f"; done`
       **Expected:** No output
       **If failed:** Add missing frontmatter fields
 
@@ -543,10 +554,10 @@ query_documents({ query: "widget testing patterns flutter", limit: 5 })
       **Expected:** File exists with warning
       **If failed:** Add warning label
 
-- [ ] File count matches proposal
-      **Verify:** `ls -1 docs/knowledge-base/testing/*.md | wc -l`
-      **Expected:** Matches pattern count in approved proposal
-      **If failed:** Check for missing patterns
+- [ ] Proposal count matches extraction
+      **Verify:** `ls -1 docs/implementation/proposals/rag-testing-*.md | wc -l`
+      **Expected:** Matches pattern count in approved extraction proposal
+      **If failed:** Check for missing proposals
 
 <mandatory>All checks must pass before proceeding to completion.</mandatory>
 
@@ -564,9 +575,9 @@ UPDATE orchestration_tasks SET last_heartbeat = datetime('now') WHERE task_id = 
 
 ### Manual Verification
 
-- [ ] RAG retrieval returns testing patterns with score < 0.3
+- [ ] All RAG proposal files contain valid YAML frontmatter and complete content
 - [ ] Reference guide has coherent structure with table of contents
-- [ ] No broken cross-references between RAG files
+- [ ] No broken cross-references between proposal files
 </core>
 </section>
 
@@ -582,21 +593,21 @@ All completion steps are non-negotiable.
 
 <template follow="exact">
 ```bash
-git add docs/knowledge-base/testing/ \
-        docs/reference/testing-guide.md \
-        docs/implementation/proposals/task-03-*.md
+git add docs/implementation/proposals/rag-testing-*.md \
+        docs/implementation/proposals/task-03-*.md \
+        docs/reference/testing-guide.md
 
 git commit -m "$(cat <<'EOF'
-task-03: extract testing patterns from 6 source files to RAG
+task-03: extract testing patterns from 6 source files
 
 Extraction:
 - Source: 6 testing docs (117KB total)
-- Created [N] RAG files in knowledge-base/testing/
+- Created [N] RAG proposal files in proposals/
 - Status: [N] valid, [N] outdated, [N] anti-pattern
 
 Reference:
 - Created consolidated testing-guide.md in reference/
-- Added warning label (RAG is authoritative)
+- Added warning label (knowledge-base is authoritative)
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
@@ -618,14 +629,18 @@ TaskStop(task_id=[subagent-id])
 -- Message FIRST
 INSERT INTO orchestration_messages (task_id, from_session, message, message_type)
 VALUES ('task-03', '$CLAUDE_SESSION_ID',
-'TASK COMPLETE: Testing patterns extracted and ingested
+'TASK COMPLETE: Testing patterns extracted
 
-Summary:
-- Source files: 6 (117KB total)
-- RAG files created: [N] in knowledge-base/testing/
-- Reference guide: docs/reference/testing-guide.md
-- Patterns: [N] valid, [N] outdated, [N] anti-pattern
-- RAG ingestion: Verified successful
+Smoothness: [0-9]
+Context Usage: [X]%
+Self-Correction: [YES/NO]
+Deviations: [count]
+Files Modified: [count]
+Tests: N/A (documentation task)
+Key Outputs:
+  - docs/implementation/proposals/rag-testing-*.md ([N] proposals created)
+  - docs/reference/testing-guide.md (created)
+  - docs/implementation/proposals/task-03-testing-extraction.md (created)
 
 Report: docs/implementation/reports/task-03-report.md
 Commit: [SHA]

@@ -1,6 +1,6 @@
 ---
 name: copyist
-description: This skill should be used when a subagent needs to "write task instructions", "create task instruction files", "generate execution instructions from an implementation plan", or "create sequential or parallel task instructions". It provides templates, coordination patterns, and validation rules for producing self-contained task instruction files that musician sessions follow autonomously.
+description: This skill should be used when a teammate needs to "write task instructions", "create task instruction files", "generate execution instructions from an implementation plan", or "create sequential or parallel task instructions". It provides templates, coordination patterns, and validation rules for producing self-contained task instruction files that musician sessions follow autonomously.
 version: 2.0
 ---
 
@@ -36,7 +36,7 @@ version: 2.0
 <core>
 ## Purpose
 
-Convert implementation plan phase sections into self-contained task instruction files. Each instruction file contains everything a musician session needs to complete its work autonomously — no external document references required. The conductor launches a subagent with this skill to create instruction files for one phase at a time.
+Convert implementation plan phase sections into self-contained task instruction files. Each instruction file contains everything a musician session needs to complete its work autonomously — no external document references required. The conductor launches a teammate with this skill to create instruction files for one phase at a time.
 </core>
 
 <context>
@@ -142,7 +142,7 @@ Apply the core writing rules (see section below) to each instruction file.
 After writing each instruction file, check against the validation checklist. Then run:
 
 ```bash
-bash ~/.claude/skills/copyist/scripts/validate-instruction.sh <file>
+bash scripts/validate-instruction.sh <file>
 ```
 
 Fix any issues before returning to conductor.
@@ -236,9 +236,9 @@ When a task step involves delegating work to a subagent (common in musician task
 
 Musician messages to the conductor follow standardized formats. When writing message templates in task instructions, include the required fields for each message type:
 
-- **Review requests:** Context Usage (%), Self-Correction (YES/NO), Deviations (count + severity), Agents Remaining (count (description)), Proposal (path), Summary, Files Modified (count), Tests (status), Smoothness (0-9), Reason (why review needed)
-- **Error reports:** Retry count (N/5), Step (which failed), Error (specific message), Context (relevant state), Proposed fix
-- **Completion reports:** Summary, Report path, Commit SHA, Verification status
+- **Review requests:** Context Usage (%), Self-Correction (YES/NO), Deviations (count + severity), Agents Remaining (count (description)), Proposal (path), Summary, Files Modified (count), Tests (status), Smoothness (0-9), Reason (why review needed), Key Outputs (paths with action)
+- **Error reports:** Retry count (N/5), Context Usage (%), Self-Correction (YES/NO), Step (which failed), Error (specific message), Context (relevant state), Report (path), Key Outputs (paths), Proposed fix
+- **Completion reports:** Summary, Smoothness (0-9), Context Usage (%), Self-Correction (YES/NO), Deviations (count), Files Modified (count), Tests (status), Key Outputs (paths), Report path, Commit SHA, Verification status
 
 ### Smoothness Scale
 
@@ -279,11 +279,12 @@ Before returning instruction files to conductor, verify each file:
 
 ### Section Completeness (Parallel — all of the above, PLUS)
 
+- [ ] Danger Files (shared resource table + coordination rules, or N/A with reason)
 - [ ] Initialization includes Database claim (activates hook automatically), Background Subagent launch
 - [ ] Review Checkpoint (commit, review request message, blocking wait subagent)
 - [ ] Post-Review Execution (steps after conductor approval)
 - [ ] Success Criteria (task-specific + standard completion criteria)
-- [ ] Review request messages include all 10 required fields (Context Usage, Smoothness, Deviations, Reason, etc.)
+- [ ] Review request messages include all 11 required fields (Context Usage, Smoothness, Deviations, Reason, Key Outputs, etc.)
 
 ### Content Quality
 

@@ -1,4 +1,4 @@
-<skill name="copyist-schema-reference" version="2.0">
+<skill name="copyist-schema-reference" version="4.0">
 
 <metadata>
 type: reference
@@ -37,7 +37,9 @@ CREATE TABLE orchestration_tasks (
     state TEXT NOT NULL CHECK (state IN (
         'watching', 'reviewing', 'exit_requested', 'complete',
         'working', 'needs_review', 'review_approved', 'review_failed',
-        'error', 'fix_proposed', 'exited'
+        'error', 'fix_proposed', 'exited',
+        'context_recovery',
+        'confirmed'
     )),
     instruction_path TEXT,
     session_id TEXT,
@@ -60,18 +62,52 @@ CREATE TABLE orchestration_tasks (
 ```sql
 CREATE TABLE orchestration_messages (
     id INTEGER PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    from_session TEXT NOT NULL,
-    message TEXT NOT NULL,
+    task_id TEXT,
+    from_session TEXT,
+    message TEXT,
     message_type TEXT CHECK (message_type IN (
         'review_request', 'error', 'context_warning', 'completion',
         'emergency', 'handoff', 'approval', 'fix_proposal',
-        'rejection', 'instruction', 'claim_blocked', 'resumption'
+        'rejection', 'instruction', 'claim_blocked', 'resumption',
+        'system'
     )),
     timestamp TEXT DEFAULT CURRENT_TIMESTAMP
 );
 ```
 </template>
+
+### repetiteur_conversation
+
+<template follow="exact">
+```sql
+CREATE TABLE repetiteur_conversation (
+    id INTEGER PRIMARY KEY,
+    sender TEXT NOT NULL,
+    message TEXT NOT NULL,
+    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+</template>
+
+<context>
+Back-and-forth dialogue table for externalized Repetiteur sessions. Sender values: `'conductor'`, `'repetiteur'`, `'user'`. The Conductor polls this table during active consultations.
+</context>
+
+### Initial Data
+
+<context>
+The Conductor inserts infrastructure rows during initialization. The `souffleur` row is inserted BEFORE `task-00`:
+
+```sql
+INSERT INTO orchestration_tasks (task_id, state, last_heartbeat)
+VALUES ('souffleur', 'watching', datetime('now'));
+
+INSERT INTO orchestration_tasks (task_id, state, last_heartbeat)
+VALUES ('task-00', 'watching', datetime('now'));
+```
+
+Task rows (`task-01`, `task-02`, etc.) are inserted by the Conductor during phase execution, after Copyist generates instructions.
+</context>
 
 <mandatory>All INSERTs into orchestration_messages must specify message_type. No NULL message_type values.</mandatory>
 </core>
@@ -89,6 +125,7 @@ CREATE TABLE orchestration_messages (
 | `reviewing` | Conductor | Actively reviewing a task's work |
 | `exit_requested` | Conductor | Ready to exit, cleanup complete |
 | `complete` | Conductor | All work finished |
+| `context_recovery` | Conductor | Context exhausted, handoff prepared, Souffleur kills and relaunches |
 
 ### Musician States (task-01+)
 
@@ -102,12 +139,19 @@ CREATE TABLE orchestration_messages (
 | `fix_proposed` | Conductor | Fix instructions sent to musician |
 | `complete` | Musician | Task finished successfully |
 | `exited` | Both | Session terminated (conductor: staleness detection; musician: 5th retry failure) |
+
+### Infrastructure States (souffleur row)
+
+| State | Set By | Meaning |
+|-------|--------|---------|
+| `watching` | Conductor | Initial state, Souffleur not yet launched |
+| `confirmed` | Souffleur | Bootstrap validation passed, Souffleur is operational |
 </core>
 
 <context>
 ### Initial State
 
-The Conductor creates task rows before launching musicians. The initial state is not constrained by the CHECK — rows are inserted with whatever state the Conductor chooses (typically a state NOT IN the musician claim exclusion list: `'working', 'complete', 'exited'`). The claim SQL's `AND state NOT IN (...)` clause serves as the effective guard.
+The Conductor creates task rows before launching musicians. The initial state is `'watching'` — one of the three states the musician claim guard allows (`'watching', 'fix_proposed', 'exit_requested'`). The claim SQL's `AND state IN (...)` clause serves as the effective guard.
 </context>
 
 <mandatory>
@@ -122,7 +166,7 @@ Include standalone heartbeat updates after major steps even without state change
 ### Message Type Rule
 
 Every INSERT into orchestration_messages MUST specify a `message_type` value.
-Valid values: `review_request`, `error`, `context_warning`, `completion`, `emergency`, `handoff`, `approval`, `fix_proposal`, `rejection`, `instruction`, `claim_blocked`, `resumption`.
+Valid values: `review_request`, `error`, `context_warning`, `completion`, `emergency`, `handoff`, `approval`, `fix_proposal`, `rejection`, `instruction`, `claim_blocked`, `resumption`, `system`.
 </mandatory>
 </section>
 
@@ -143,7 +187,7 @@ SET state = 'working',
     last_heartbeat = datetime('now'),
     retry_count = 0
 WHERE task_id = '[task-id]'
-  AND state NOT IN ('working', 'complete', 'exited');
+  AND state IN ('watching', 'fix_proposed', 'exit_requested');
 ```
 </template>
 
@@ -159,7 +203,7 @@ WHERE task_id = '[task-id]';
 
 ### Request Review
 
-<mandatory>Message FIRST, then state change. All 10 review fields required.</mandatory>
+<mandatory>Message FIRST, then state change. All 11 review fields required.</mandatory>
 
 <template follow="exact">
 ```sql
@@ -178,6 +222,8 @@ Files Modified: [count]
 Tests: [status or N/A]
 Smoothness: [0-9]
 Reason: [why review needed]
+Key Outputs:
+  - [path] (created/modified/rag-addition)
 
 Review focus:
 - [what to check]
@@ -211,11 +257,16 @@ INSERT INTO orchestration_messages (task_id, from_session, message, message_type
 VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
 'ERROR (Retry [N]/5): [description]
 
+Context Usage: [X]%
+Self-Correction: [YES/NO]
 Step: [which step]
 Error: [specific message]
 Context: [relevant state]
-
-Proposed fix: [what will be tried]',
+Report: [error report path]
+Key Outputs:
+  - [path] (created/modified)
+Proposed fix: [what will be tried]
+Awaiting conductor fix proposal',
 'error');
 
 UPDATE orchestration_tasks
@@ -238,7 +289,14 @@ INSERT INTO orchestration_messages (task_id, from_session, message, message_type
 VALUES ('[task-id]', '$CLAUDE_SESSION_ID',
 'TASK COMPLETE: [summary]
 
-[details]
+Smoothness: [0-9]
+Context Usage: [X]%
+Self-Correction: [YES/NO]
+Deviations: [count]
+Files Modified: [count]
+Tests: [status]
+Key Outputs:
+  - [path] (created/modified/rag-addition)
 
 Report: [report path]
 Commit: [SHA]
@@ -302,9 +360,11 @@ Task(
     description="Monitor conductor messages for [task-id]",
     prompt="""Monitor coordination database for [task-id].
 
-Check every 8 seconds using comms-link:
+Check every 15 seconds using comms-link:
 1. Query: SELECT state FROM orchestration_tasks WHERE task_id = '[task-id]'
 2. Query: SELECT message FROM orchestration_messages WHERE task_id = '[task-id]' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
+3. Heartbeat: SELECT last_heartbeat FROM orchestration_tasks WHERE task_id = '[task-id]'
+   If older than 60 seconds: UPDATE orchestration_tasks SET last_heartbeat = datetime('now') WHERE task_id = '[task-id]'
 
 Exit conditions:
 - State changes from 'working' (indicates conductor intervention)
@@ -316,6 +376,7 @@ When exiting:
 - Include latest message if any
 - Return immediately without further action""",
     subagent_type="general-purpose",
+    model="opus",
     run_in_background=True
 )
 ```
@@ -329,7 +390,7 @@ Task(
     description="Wait for review approval for [task-id]",
     prompt="""Wait for conductor review of [task-id].
 
-Poll every 8 seconds using comms-link:
+Poll every 10 seconds using comms-link:
 1. Query: SELECT state FROM orchestration_tasks WHERE task_id = '[task-id]'
 2. Query: SELECT message FROM orchestration_messages WHERE task_id = '[task-id]' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
 
@@ -340,9 +401,10 @@ Exit when state changes from 'needs_review' to:
 
 Include latest conductor message in response.
 
-Max iterations: 150 (20 minutes)
+Max iterations: 90 (15 minutes)
 If timeout: Report TIMEOUT""",
     subagent_type="general-purpose",
+    model="opus",
     run_in_background=False
 )
 ```
@@ -361,7 +423,7 @@ The stop hook activates automatically when a session's `CLAUDE_SESSION_ID` is fo
 
 <core>
 ### Exit Criteria
-- **Conductor (task-00):** `["exit_requested", "complete"]` (see `tools/implementation-hook/preset-conductor.yaml`)
+- **Conductor (task-00):** `["exit_requested", "complete", "context_recovery"]` (see `tools/implementation-hook/preset-orchestration.yaml`)
 - **Musician (task-01+):** `["complete", "exited"]` (see `tools/implementation-hook/preset-musician.yaml`)
 </core>
 </section>

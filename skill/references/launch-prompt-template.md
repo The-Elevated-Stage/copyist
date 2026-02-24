@@ -119,7 +119,7 @@ When writing task instructions, the copyist draws from two sources. They are app
 <context>
 ## Notes
 
-- The copyist is **always** a subagent launched by a conductor session. It never runs standalone.
+- The copyist is **always** a teammate launched by a conductor session. It never runs standalone.
 - The conductor reads the plan's verification index to get line ranges for each phase section, then passes those line ranges to the copyist in the launch prompt.
 - The phase section is self-contained — the copyist should rarely need to reference the plan's overview section. Doing so defeats the context-constraining purpose of self-containment.
 - Output directory defaults to `docs/tasks/` but the conductor may override this in the prompt.
