@@ -138,7 +138,7 @@ SET state = 'working',
     last_heartbeat = datetime('now'),
     retry_count = 0
 WHERE task_id = 'task-03'
-  AND state NOT IN ('working', 'complete', 'exited');
+  AND state IN ('watching', 'fix_proposed', 'exit_requested');
 ```
 </template>
 
@@ -161,9 +161,11 @@ Task(
     description="Monitor conductor messages for task-03",
     prompt="""Monitor coordination database for task-03.
 
-Check every 8 seconds using comms-link:
+Check every 15 seconds using comms-link:
 1. Query: SELECT state FROM orchestration_tasks WHERE task_id = 'task-03'
 2. Query: SELECT message FROM orchestration_messages WHERE task_id = 'task-03' AND from_session = 'task-00' ORDER BY timestamp DESC LIMIT 1
+3. Heartbeat: SELECT last_heartbeat FROM orchestration_tasks WHERE task_id = 'task-03'
+   If older than 60 seconds: UPDATE orchestration_tasks SET last_heartbeat = datetime('now') WHERE task_id = 'task-03'
 
 Exit conditions:
 - State changes from 'working' (indicates conductor intervention)
@@ -777,10 +779,14 @@ INSERT INTO orchestration_messages (task_id, from_session, message, message_type
 VALUES ('task-03', '$CLAUDE_SESSION_ID',
 'ERROR (Retry [N]/5): [description]
 
+Context Usage: [X]%
+Self-Correction: [YES/NO]
 Step: [which step failed]
 Error: [specific message]
 Context: [relevant state]
-
+Report: docs/implementation/reports/task-03-error-report.md
+Key Outputs:
+  - [path] (created/modified)
 Proposed fix: [what will be tried]',
 'error');
 

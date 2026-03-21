@@ -115,7 +115,7 @@ SET state = 'working',
     last_heartbeat = datetime('now'),
     retry_count = 0
 WHERE task_id = 'task-01'
-  AND state NOT IN ('working', 'complete', 'exited');
+  AND state IN ('watching', 'fix_proposed', 'exit_requested');
 ```
 </template>
 

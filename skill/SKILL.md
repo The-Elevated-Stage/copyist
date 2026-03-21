@@ -89,6 +89,8 @@ Arranger-produced plans wrap each phase in sentinel markers:
 
 The Conductor extracts line ranges from the plan index at the top of the file (`<!-- plan-index:start -->` block containing `<!-- phase:N lines:NN-NN title:"..." -->` entries) and passes them in the launch prompt. You should receive a clean phase section.
 
+Phase sections may contain `<section id="phase-N">` tags per the Tier 2 hybrid document convention. These coexist with sentinel markers and can be safely ignored — the Copyist works from the full phase text bounded by sentinel markers. The `<section>` tags provide structural validation but are not needed for content extraction.
+
 **Expected phase components** (in order, all present):
 - **Objective** — what this phase accomplishes
 - **Prerequisites** — outputs from prior phases, file paths, preconditions
@@ -97,6 +99,17 @@ The Conductor extracts line ranges from the plan index at the top of the file (`
 - **Frontend guidelines** — when applicable, inlined directly (not a separate reference)
 - **Expected outcomes** — what success looks like
 - **Testing recommendations** — testing considerations from planning
+
+**Authority tags in phase sections:** The Arranger's phase sections use authority tags to classify content. When consuming these for task instruction generation:
+- `<mandatory>` content must be preserved verbatim in task instructions. These are non-negotiable constraints that the Conductor cannot override and Musicians must follow exactly.
+- `<guidance>` content can be adapted for task-level context. These are the Arranger's recommendations.
+- `<core>` is primary implementation content — the substance to be decomposed into task steps.
+- `<context>` is background information — preserved as supplementary reference in task instructions but no action required from it.
+
+**Integration surface distribution:** Phase sections contain an "Integration Points" subsection describing how the phase's work connects to other phases. Distribute this information across task instruction sections:
+- **Prerequisites** — dependency contracts (what this task needs from prior phases)
+- **Danger Files** — shared resource coordination (files modified by multiple tasks)
+- **Work Execution steps** — implementation-level integration (interfaces to implement, contracts to maintain)
 
 **Not part of the phase section:** Conductor-review checkpoints (`<!-- conductor-review:N -->`) follow each phase but are the Conductor's concern, not the Copyist's. If your line range includes review content, ignore it.
 
