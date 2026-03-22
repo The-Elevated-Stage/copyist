@@ -69,7 +69,7 @@ Task instructions include a self-assessment scale that Musicians use in review r
 Every instruction file is checked before delivery:
 
 ```bash
-bash skill/scripts/validate-instruction.sh <file>
+bash skills/copyist/scripts/validate-instruction.sh <file>
 ```
 
 The validator checks section completeness (all required headings present and ordered), SQL correctness (table names, `message_type` presence, heartbeat inclusion), file path validity, Tier 3 format compliance, and `<task-instruction>` wrapper structure.

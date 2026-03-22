@@ -1,0 +1,13 @@
+{
+  "name": "copyist",
+  "description": "Task instruction generation for Claude Code orchestration",
+  "version": "1.0.0",
+  "author": {
+    "name": "The Elevated Stage",
+    "url": "https://github.com/The-Elevated-Stage"
+  },
+  "homepage": "https://github.com/The-Elevated-Stage/copyist",
+  "repository": "https://github.com/The-Elevated-Stage/copyist.git",
+  "license": "MIT",
+  "keywords": ["orchestration", "task-instructions", "templates", "elevated-stage"]
+}
